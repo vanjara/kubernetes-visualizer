@@ -10,7 +10,6 @@
     <style>
         body {
             font-family: 'Inter', sans-serif;
-            overflow: hidden; /* Prevent scrolling */
         }
         .clickable-component {
             transition: all 0.3s ease-in-out;
@@ -33,40 +32,44 @@
         .control-panel {
             backdrop-filter: blur(10px);
             -webkit-backdrop-filter: blur(10px);
+            position: sticky;
+            top: 0;
+            height: 100vh;
         }
         #info-modal-overlay {
             transition: opacity 0.3s ease-in-out;
         }
     </style>
 </head>
-<body class="bg-gray-900 text-white flex h-screen">
+<body class="bg-gray-900 text-white">
 
-    <!-- Main Visualization -->
-    <div id="viz-container" class="flex-grow relative">
-        <svg id="kube-viz" class="w-full h-full"></svg>
-        <div class="tooltip"></div>
-    </div>
-
-    <!-- Control Panel -->
-    <div class="w-96 bg-gray-800 bg-opacity-70 p-6 shadow-2xl overflow-y-auto control-panel">
-        <h2 class="text-2xl font-bold mb-6 text-cyan-400">Kubernetes Explorer</h2>
-
-        <div class="mb-6">
-            <h3 class="text-lg font-semibold mb-3 text-gray-300">Cluster Controls</h3>
-            <button id="add-pod-btn" class="w-full bg-cyan-500 hover:bg-cyan-600 text-white font-bold py-2 px-4 rounded-lg transition duration-300 ease-in-out transform hover:scale-105">
-                Deploy Pod
-            </button>
-            <button id="remove-pod-btn" class="mt-2 w-full bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded-lg transition duration-300 ease-in-out transform hover:scale-105">
-                Remove Pod
-            </button>
-             <button id="reset-btn" class="mt-2 w-full bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded-lg transition duration-300 ease-in-out">
-                Reset Simulation
-            </button>
+    <div class="flex flex-row">
+        <!-- Main Visualization -->
+        <div id="viz-container" class="flex-grow relative">
+            <svg id="kube-viz" class="w-full"></svg>
+            <div class="tooltip"></div>
         </div>
 
-        <div>
-            <h3 class="text-lg font-semibold mb-2 text-gray-300">Live YAML (Simplified)</h3>
-            <pre id="yaml-box" class="bg-gray-900 p-4 rounded-lg text-xs text-yellow-300 overflow-y-auto h-72 whitespace-pre-wrap"><code>apiVersion: apps/v1
+        <!-- Control Panel -->
+        <div class="w-96 flex-shrink-0 bg-gray-800 bg-opacity-70 p-6 shadow-2xl overflow-y-auto control-panel">
+            <h2 class="text-2xl font-bold mb-6 text-cyan-400">Kubernetes Explorer</h2>
+
+            <div class="mb-6">
+                <h3 class="text-lg font-semibold mb-3 text-gray-300">Cluster Controls</h3>
+                <button id="add-pod-btn" class="w-full bg-cyan-500 hover:bg-cyan-600 text-white font-bold py-2 px-4 rounded-lg transition duration-300 ease-in-out transform hover:scale-105">
+                    Deploy Pod
+                </button>
+                <button id="remove-pod-btn" class="mt-2 w-full bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded-lg transition duration-300 ease-in-out transform hover:scale-105">
+                    Remove Pod
+                </button>
+                 <button id="reset-btn" class="mt-2 w-full bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded-lg transition duration-300 ease-in-out">
+                    Reset Simulation
+                </button>
+            </div>
+
+            <div>
+                <h3 class="text-lg font-semibold mb-2 text-gray-300">Live YAML (Simplified)</h3>
+                <pre id="yaml-box" class="bg-gray-900 p-4 rounded-lg text-xs text-yellow-300 overflow-y-auto h-72 whitespace-pre-wrap"><code>apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: my-app
@@ -81,6 +84,7 @@ spec:
       - name: my-app-container
         image: nginx
 </code></pre>
+            </div>
         </div>
     </div>
     
@@ -111,7 +115,7 @@ spec:
             const modalContent = document.getElementById('modal-content');
             const modalCloseBtn = document.getElementById('modal-close-btn');
 
-            let width, height;
+            let width;
 
             // --- LAYOUT VARIABLES (SHARED SCOPE) ---
             let masterNodeSize, workerNodeSize, nodeSpacing, masterX, masterY, workerStartX, workerY;
@@ -135,18 +139,6 @@ spec:
             // --- SIZING & LAYOUT CALCULATION ---
             function resize() {
                 width = vizContainer.clientWidth;
-                height = vizContainer.clientHeight;
-                svg.attr("width", width).attr("height", height);
-
-                masterNodeSize = { width: Math.min(220, width * 0.25), height: Math.min(300, height * 0.45) };
-                workerNodeSize = { width: Math.min(250, width * 0.3), height: Math.min(400, height * 0.6) };
-                nodeSpacing = 50;
-                masterX = width / 2 - masterNodeSize.width / 2;
-                masterY = 50;
-                const totalWorkerWidth = 2 * workerNodeSize.width + nodeSpacing;
-                workerStartX = (width - totalWorkerWidth) / 2;
-                workerY = masterY + masterNodeSize.height + 80;
-
                 render();
             }
 
@@ -154,22 +146,50 @@ spec:
             function render() {
                 svg.selectAll("*").remove(); 
 
-                // --- MASTER NODE & COMPONENTS (WITH DYNAMIC LAYOUT) ---
+                const masterTopMargin = 60; // Increased margin to make space for the title
+                const masterWorkerGap = 60;
+
+                masterNodeSize = { 
+                    width: Math.min(220, width * 0.25), 
+                    height: 250 // Adjusted height for a cleaner look
+                };
+                masterX = width / 2 - masterNodeSize.width / 2;
+                masterY = masterTopMargin;
+                
+                workerY = masterY + masterNodeSize.height + masterWorkerGap;
+                
+                workerNodeSize = { 
+                    width: Math.min(250, width * 0.3),
+                };
+                
+                nodeSpacing = 50;
+                const totalWorkerWidth = 2 * workerNodeSize.width + nodeSpacing;
+                workerStartX = (width - totalWorkerWidth) / 2;
+                
+
+                // --- MASTER NODE & COMPONENTS ---
                 const masterGroup = svg.append("g");
+
+                // *** FIX: Master Node title moved outside the box ***
+                masterGroup.append("text")
+                    .attr("x", masterX + masterNodeSize.width / 2)
+                    .attr("y", masterY - 15) // Positioned above the box
+                    .attr("text-anchor", "middle")
+                    .attr("fill", "white")
+                    .attr("font-weight", "bold")
+                    .style("font-size", "14px")
+                    .text("Master Node (Control Plane)");
+
                 const masterNode = masterGroup.append('g').attr('class', 'clickable-component');
                 masterNode.append("rect")
                     .attr("x", masterX).attr("y", masterY)
                     .attr("width", masterNodeSize.width).attr("height", masterNodeSize.height)
                     .attr("rx", 10).attr("fill", "rgba(59, 130, 246, 0.3)")
                     .attr("stroke", "rgba(59, 130, 246, 1)").attr("stroke-width", 2);
-                masterNode.append("text")
-                    .attr("x", masterX + masterNodeSize.width / 2).attr("y", masterY + 25)
-                    .attr("text-anchor", "middle").attr("fill", "white").attr("font-weight", "bold")
-                    .text("Master Node (Control Plane)");
                 setupComponentInteraction(masterNode, "Master Node");
 
                 const masterComponentNames = ["API Server", "etcd", "Scheduler", "Controller Manager"];
-                const masterTopPadding = 50;
+                const masterTopPadding = 20; // Adjusted padding
                 const masterBottomPadding = 15;
                 const masterVerticalSpacing = 10;
                 const masterAvailableHeight = masterNodeSize.height - masterTopPadding - masterBottomPadding;
@@ -188,35 +208,38 @@ spec:
                         .attr("text-anchor", "middle").attr("fill", "white")
                         .style("font-size", "12px");
 
-                    // *** FIX: Text wrapping for "Controller Manager" ***
                     if (name === "Controller Manager") {
-                        textElement.attr("y", yPos + masterComponentHeight / 2 - 7); // Adjust Y for two lines
+                        textElement.attr("y", yPos + masterComponentHeight / 2 - 7);
                         textElement.append("tspan").text("Controller");
                         textElement.append("tspan").attr("x", masterX + masterNodeSize.width / 2).attr("dy", "1.2em").text("Manager");
                     } else {
-                        textElement.attr("y", yPos + masterComponentHeight / 2)
-                           .attr("dy", "0.35em") // Vertical center for single line
-                           .text(name);
+                        textElement.attr("y", yPos + masterComponentHeight / 2).attr("dy", "0.35em").text(name);
                     }
-                    
                     setupComponentInteraction(compGroup, name);
                 });
 
-                // --- WORKER NODES & COMPONENTS ---
+                // --- WORKER NODES & COMPONENTS (Initial Render) ---
                 const workerNodes = [{ id: 1, x: workerStartX }, { id: 2, x: workerStartX + workerNodeSize.width + nodeSpacing }];
                 workerNodes.forEach(node => {
                     const workerGroup = svg.append("g");
-                    const workerNode = workerGroup.append('g').attr('class', 'clickable-component');
-                    workerNode.append("rect")
+                    workerGroup.append('rect')
+                        .attr("id", `worker-node-rect-${node.id}`)
                         .attr("x", node.x).attr("y", workerY)
-                        .attr("width", workerNodeSize.width).attr("height", workerNodeSize.height)
+                        .attr("width", workerNodeSize.width).attr("height", 120) // Start with base height
                         .attr("rx", 10).attr("fill", "rgba(22, 163, 74, 0.3)")
-                        .attr("stroke", "rgba(22, 163, 74, 1)").attr("stroke-width", 2);
-                    workerNode.append("text")
+                        .attr("stroke", "rgba(74, 222, 128, 1)").attr("stroke-width", 2);
+                    
+                    workerGroup.append("text")
                         .attr("x", node.x + workerNodeSize.width / 2).attr("y", workerY + 25)
                         .attr("text-anchor", "middle").attr("fill", "white").attr("font-weight", "bold")
                         .text(`Worker Node ${node.id}`);
-                    setupComponentInteraction(workerNode, "Worker Node");
+
+                    const workerNodeClickable = workerGroup.append('rect')
+                         .attr('class', 'clickable-component')
+                         .attr("x", node.x).attr("y", workerY)
+                         .attr("width", workerNodeSize.width).attr("height", "100%")
+                         .attr('fill', 'transparent');
+                    setupComponentInteraction(workerNodeClickable, "Worker Node");
 
                     const kubeletGroup = workerGroup.append("g").attr("class", "clickable-component");
                     kubeletGroup.append("rect")
@@ -254,17 +277,34 @@ spec:
                 podsData.forEach((pod, i) => { pod.nodeIndex = i % 2; });
                 const podsByNode = new Map(d3.groups(podsData, d => d.nodeIndex));
                 const workerNodeIndexes = [0, 1];
+                let maxNodeHeight = 0;
+
                 workerNodeIndexes.forEach(nodeIndex => {
-                    const workerNodeX = (workerStartX + (workerNodeSize.width + nodeSpacing) * nodeIndex);
-                    const podAreaY = workerY + 90;
+                    const pods = podsByNode.get(nodeIndex) || [];
+                    const topSectionHeight = 90;
+                    const bottomPadding = 30;
                     const podSize = { width: workerNodeSize.width * 0.8, height: 60 };
                     const podSpacing = 10;
+                    const podsHeight = pods.length > 0 ? (pods.length * podSize.height) + ((pods.length) * podSpacing) : 0;
+                    const newHeight = topSectionHeight + podsHeight + bottomPadding;
                     
-                    const pods = podsByNode.get(nodeIndex) || [];
+                    if (newHeight > maxNodeHeight) {
+                        maxNodeHeight = newHeight;
+                    }
+
+                    d3.select(`#worker-node-rect-${nodeIndex + 1}`)
+                        .transition()
+                        .duration(500)
+                        .attr("height", newHeight);
+
+
+                    const workerNodeX = (workerStartX + (workerNodeSize.width + nodeSpacing) * nodeIndex);
+                    const podAreaY = workerY + topSectionHeight;
+                    
                     const podSelection = svg.selectAll(`.pod-node-${nodeIndex}`).data(pods, d => d.id);
                     
                     podSelection.exit().transition().duration(300)
-                        .attr("transform", `translate(${workerNodeX + workerNodeSize.width / 2}, ${workerY + workerNodeSize.height}) scale(0)`)
+                        .attr("transform", `translate(${workerNodeX + workerNodeSize.width / 2}, ${workerY + newHeight}) scale(0)`)
                         .remove();
 
                     const podEnter = podSelection.enter().append("g")
@@ -290,6 +330,10 @@ spec:
                     podEnter.merge(podSelection).transition().duration(500)
                         .attr("transform", (d, i) => `translate(${workerNodeX + (workerNodeSize.width / 2)}, ${podAreaY + (i * (podSize.height + podSpacing))}) scale(1)`);
                 });
+
+                // Set the overall SVG height to accommodate the tallest worker node
+                const totalSvgHeight = workerY + maxNodeHeight + 40; // 40px bottom margin
+                svg.transition().duration(500).attr('height', totalSvgHeight);
 
                 updateYaml();
             }
@@ -363,3 +407,4 @@ spec:
     </script>
 </body>
 </html>
+<!DOCTYPE html>
