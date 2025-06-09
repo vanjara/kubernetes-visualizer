@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kubernetes Learning Path</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .path-node {
+            cursor: pointer;
+            transition: all 0.3s ease-in-out;
+        }
+        .path-node:hover rect {
+            filter: url(#glow);
+        }
+        .path-arrow {
+            stroke-dasharray: 5;
+            animation: dash-flow 2s linear infinite;
+        }
+        @keyframes dash-flow {
+            to { stroke-dashoffset: -20; }
+        }
+    </style>
+</head>
+<body class="bg-white text-gray-800 flex items-center justify-center h-screen">
+
+    <div id="viz-container" class="w-full h-full">
+        <svg id="viz" class="w-full h-full"></svg>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const svg = d3.select("#viz");
+            const vizContainer = document.getElementById('viz-container');
+            let width, height;
+
+            // *** NEW: Added 'url' property for navigation ***
+            const learningPath = [
+                { id: "core", title: "1. Core Concepts", subtitle: "Pods, Deployments, ReplicaSets", url: "core-concepts.html" },
+                { id: "services", title: "2. Service Types", subtitle: "ClusterIP, NodePort, LoadBalancer", url: "service-types.html" },
+                { id: "ingress", title: "3. Ingress", subtitle: "Routing External Traffic", url: "ingress.html" },
+                { id: "config", title: "4. Config & Secrets", subtitle: "Managing Application Configuration", url: "config-secrets.html" },
+                { id: "storage", title: "5. Persistent Storage", subtitle: "PV, PVC, and Stateful Apps", url: "persistent-storage.html" }
+            ];
+
+            function drawLearningPath() {
+                svg.selectAll("*").remove();
+                width = vizContainer.clientWidth;
+                height = vizContainer.clientHeight;
+                svg.attr("width", width).attr("height", height);
+
+                const defs = svg.append("defs");
+                const addMarker = (id, color) => defs.append("marker").attr("id", id).attr("viewBox", "0 -5 10 10").attr("refX", 10).attr("refY", 0).attr("markerWidth", 6).attr("markerHeight", 6).attr("orient", "auto").append("path").attr("d", "M0,-5L10,0L0,5").attr("fill", color);
+                addMarker("arrow-gray", "#6B7280");
+                const filter = defs.append("filter").attr("id", "glow").attr('x', '-50%').attr('y', '-50%').attr('width', '200%').attr('height', '200%');
+                filter.append("feGaussianBlur").attr("stdDeviation", "8").attr("result", "coloredBlur");
+                const feMerge = filter.append("feMerge");
+                feMerge.append("feMergeNode").attr("in", "coloredBlur");
+                feMerge.append("feMergeNode").attr("in", "SourceGraphic");
+
+                svg.append("text")
+                    .attr("x", width / 2)
+                    .attr("y", height * 0.1)
+                    .attr("text-anchor", "middle")
+                    .attr("class", "text-3xl font-bold text-cyan-500")
+                    .text("Kubernetes Learning Path");
+
+                const nodeWidth = 250;
+                const nodeHeight = 80;
+                const verticalGap = 70;
+                const totalHeight = (learningPath.length * nodeHeight) + ((learningPath.length - 1) * verticalGap);
+                // *** FIX: Increased top margin to prevent overlap ***
+                const startY = (height - totalHeight) / 2 + 60; 
+
+                const nodes = learningPath.map((d, i) => {
+                    return {
+                        ...d,
+                        x: width / 2,
+                        y: startY + i * (nodeHeight + verticalGap)
+                    };
+                });
+
+                svg.selectAll(".path-arrow")
+                    .data(nodes.slice(0, -1))
+                    .enter()
+                    .append("line")
+                    .attr("class", "path-arrow")
+                    .attr("x1", d => d.x)
+                    .attr("y1", d => d.y + nodeHeight / 2)
+                    .attr("x2", (d, i) => nodes[i + 1].x)
+                    .attr("y2", (d, i) => nodes[i + 1].y - nodeHeight / 2)
+                    .attr("stroke", "#6B7280")
+                    .attr("stroke-width", 2)
+                    .attr("marker-end", "url(#arrow-gray)");
+
+                const nodeGroups = svg.selectAll(".path-node")
+                    .data(nodes)
+                    .enter()
+                    .append("g")
+                    .attr("class", "path-node")
+                    .on("click", (event, d) => {
+                        // In a real project, you would uncomment the line below
+                        // and ensure the HTML files are in the same directory.
+                        // window.location.href = d.url; 
+                        
+                        // For this simulation, we will show a placeholder.
+                        //showVisualizerPlaceholder(d);
+                        window.location.href = d.url;
+                    });
+
+
+                nodeGroups.append("rect")
+                    .attr("x", d => d.x - nodeWidth / 2)
+                    .attr("y", d => d.y - nodeHeight / 2)
+                    .attr("width", nodeWidth)
+                    .attr("height", nodeHeight)
+                    .attr("rx", 10)
+                    .attr("fill", "rgba(14, 165, 233, 0.1)")
+                    .attr("stroke", "rgba(14, 165, 233, 0.8)")
+                    .attr("stroke-width", 1.5);
+
+                nodeGroups.append("text")
+                    .attr("x", d => d.x)
+                    .attr("y", d => d.y - 10)
+                    .attr("text-anchor", "middle")
+                    .attr("class", "text-lg font-semibold text-gray-800")
+                    .text(d => d.title);
+                
+                nodeGroups.append("text")
+                    .attr("x", d => d.x)
+                    .attr("y", d => d.y + 15)
+                    .attr("text-anchor", "middle")
+                    .attr("class", "text-sm text-gray-500")
+                    .text(d => d.subtitle);
+            }
+
+            function showVisualizerPlaceholder(d) {
+                svg.selectAll("*").remove();
+
+                svg.append("text")
+                    .attr("x", width / 2)
+                    .attr("y", height / 2 - 40)
+                    .attr("text-anchor", "middle")
+                    .attr("class", "text-4xl font-bold text-gray-700")
+                    .text(`${d.title} Visualizer`);
+                
+                svg.append("text")
+                    .attr("x", width / 2)
+                    .attr("y", height / 2)
+                    .attr("text-anchor", "middle")
+                    .attr("class", "text-lg text-gray-500")
+                    .text(`(Navigating to ${d.url}...)`);
+
+                const backButton = svg.append("g")
+                    .attr("class", "path-node")
+                    .on("click", drawLearningPath);
+
+                backButton.append("rect")
+                    .attr("x", width/2 - 75)
+                    .attr("y", height/2 + 60)
+                    .attr("width", 150)
+                    .attr("height", 50)
+                    .attr("rx", 8)
+                    .attr("fill", "rgba(107, 114, 128, 0.2)");
+
+                backButton.append("text")
+                    .attr("x", width/2)
+                    .attr("y", height/2 + 85)
+                    .attr("text-anchor", "middle")
+                    .attr("class", "font-semibold text-gray-600")
+                    .text("← Back to Path");
+            }
+
+            window.addEventListener('resize', drawLearningPath);
+            drawLearningPath();
+        });
+    </script>
+</body>
+</html>

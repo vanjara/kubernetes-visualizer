@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kubernetes Service Types Explorer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .control-panel { 
+            backdrop-filter: blur(10px); 
+            -webkit-backdrop-filter: blur(10px);
+            position: sticky;
+            top: 0;
+            height: 100vh;
+        }
+        .traffic-line {
+            stroke-dasharray: 4;
+            animation: dash 1.5s linear infinite;
+        }
+        @keyframes dash {
+            to { stroke-dashoffset: -12; }
+        }
+        .control-btn { transition: all 0.2s ease-in-out; }
+        .control-btn.active {
+             transform: scale(1.05);
+             box-shadow: 0 0 15px rgba(59, 130, 246, 0.5);
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-white">
+
+    <div class="flex flex-row">
+        <!-- Main Visualization -->
+        <div id="viz-container" class="flex-grow relative" style="height: 100vh;">
+            <svg id="service-viz" class="w-full h-full"></svg>
+        </div>
+
+        <!-- Control Panel -->
+        <div class="w-96 flex-shrink-0 bg-gray-800 bg-opacity-70 p-6 shadow-2xl overflow-y-auto control-panel">
+            <h2 class="text-2xl font-bold mb-6 text-cyan-400">Service Types</h2>
+            <div class="space-y-3 mb-6">
+                <button id="btn-clusterip" class="control-btn w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-lg">
+                    ClusterIP
+                </button>
+                <button id="btn-nodeport" class="control-btn w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-4 rounded-lg">
+                    NodePort
+                </button>
+                <button id="btn-loadbalancer" class="control-btn w-full bg-orange-500 hover:bg-orange-600 text-white font-bold py-3 px-4 rounded-lg">
+                    LoadBalancer
+                </button>
+                <button id="btn-reset" class="control-btn w-full bg-gray-600 hover:bg-gray-700 text-white font-bold py-3 px-4 rounded-lg mt-4">
+                    Reset
+                </button>
+            </div>
+
+            <div id="explanation-box" class="bg-gray-900 p-4 rounded-lg h-auto">
+                <h3 id="exp-title" class="text-lg font-bold text-cyan-400 mb-2">Select a Service Type</h3>
+                <p id="exp-desc" class="text-sm text-gray-400 mb-3">Click a button to see how that Service type directs network traffic.</p>
+                <h4 class="font-semibold text-gray-200 mt-4 mb-1">Use Case:</h4>
+                <p id="exp-use-case" class="text-sm text-gray-400"></p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const svg = d3.select("#service-viz");
+            const vizContainer = document.getElementById('viz-container');
+            let width, height;
+
+            const buttons = {
+                clusterip: d3.select("#btn-clusterip"),
+                nodeport: d3.select("#btn-nodeport"),
+                loadbalancer: d3.select("#btn-loadbalancer"),
+                reset: d3.select("#btn-reset")
+            };
+            const expTitle = d3.select("#exp-title");
+            const expDesc = d3.select("#exp-desc");
+            const expUseCase = d3.select("#exp-use-case");
+
+            const explanations = {
+                "initial": {
+                    title: "Select a Service Type",
+                    desc: "Click one of the buttons to learn about a specific Kubernetes Service type and see how it works.",
+                    useCase: "Each Service type is suited for different scenarios."
+                },
+                "ClusterIP": {
+                    title: "ClusterIP (Default)",
+                    desc: "Exposes the Service on an internal IP address within the cluster. This makes the service only reachable from within the cluster, not from the outside world. It is the default service type.",
+                    useCase: "Ideal for internal communication between different microservices within your application (e.g., a web frontend talking to a backend API)."
+                },
+                "NodePort": {
+                    title: "NodePort",
+                    desc: "Exposes the Service on each Worker Node's IP address at a static, high-numbered port. kube-proxy on the node then routes this traffic to the internal ClusterIP service.",
+                    useCase: "Useful for development or when you need to expose a service directly without a cloud load balancer, but not recommended for production web traffic."
+                },
+                "LoadBalancer": {
+                    title: "LoadBalancer",
+                    desc: "Exposes the Service externally using a cloud provider's load balancer. An external IP address is created and assigned to the service, and traffic to this IP is forwarded to the pods via the internal ClusterIP service.",
+                    useCase: "The standard and best way to expose production applications to the internet on cloud platforms like AWS, GCP, or Azure."
+                }
+            };
+
+            let activeServiceType = null;
+
+            function resize() {
+                width = vizContainer.clientWidth;
+                height = vizContainer.clientHeight;
+                svg.attr("width", width).attr("height", height);
+                if(activeServiceType) drawVisualization(activeServiceType);
+                else drawVisualization("initial");
+            }
+
+            function drawVisualization(type) {
+                activeServiceType = type;
+                svg.selectAll("*").remove();
+
+                Object.values(buttons).forEach(btn => btn.classed('active', false));
+                if(buttons[type.toLowerCase()]) buttons[type.toLowerCase()].classed('active', true);
+
+                expTitle.text(explanations[type]?.title || explanations.initial.title);
+                expDesc.text(explanations[type]?.desc || explanations.initial.desc);
+                expUseCase.text(explanations[type]?.useCase || explanations.initial.useCase);
+
+                const clusterPadding = { top: height * 0.15, bottom: height * 0.1, left: width * 0.05, right: width * 0.05 };
+                const clusterWidth = width - clusterPadding.left - clusterPadding.right;
+                const clusterHeight = height - clusterPadding.top - clusterPadding.bottom;
+                
+                const nodeWidth = clusterWidth * 0.4;
+                const nodeHeight = clusterHeight * 0.5;
+                const nodeGap = clusterWidth * 0.05;
+                
+                const nodesY = clusterPadding.top + (clusterHeight - nodeHeight);
+                const nodes = [
+                    { id: 1, x: clusterPadding.left + (clusterWidth - (2 * nodeWidth + nodeGap)) / 2, y: nodesY },
+                    { id: 2, x: clusterPadding.left + (clusterWidth - (2 * nodeWidth + nodeGap)) / 2 + nodeWidth + nodeGap, y: nodesY }
+                ];
+                
+                svg.append("rect")
+                    .attr("x", clusterPadding.left).attr("y", clusterPadding.top)
+                    .attr("width", clusterWidth).attr("height", clusterHeight)
+                    .attr("rx", 15)
+                    .attr("fill", "rgba(255, 255, 255, 0.05)")
+                    .attr("stroke", "rgba(59, 130, 246, 0.5)")
+                    .attr("stroke-dasharray", "10,5");
+                svg.append("text").text("Kubernetes Cluster").attr("x", clusterPadding.left + clusterWidth - 20).attr("y", clusterPadding.top + 30).attr("fill", "rgba(59, 130, 246, 0.7)").attr("text-anchor", "end");
+
+                nodes.forEach(node => {
+                    svg.append("rect").attr("x", node.x).attr("y", node.y).attr("width", nodeWidth).attr("height", nodeHeight).attr("rx", 10).attr("fill", "rgba(74, 222, 128, 0.1)").attr("stroke", "rgba(74, 222, 128, 0.7)");
+                    svg.append("text").text(`Worker Node ${node.id}`).attr("x", node.x + nodeWidth / 2).attr("y", node.y + 20).attr("text-anchor", "middle").attr("fill", "white");
+                    const kubeProxyWidth = 80;
+                    const kubeProxyHeight = 25;
+                    svg.append("rect").attr("x", node.x + (nodeWidth - kubeProxyWidth) / 2).attr("y", node.y + 40).attr("width", kubeProxyWidth).attr("height", kubeProxyHeight).attr("rx", 5).attr("fill", "rgba(16, 185, 129, 0.4)");
+                    svg.append("text").text("kube-proxy").attr("x", node.x + nodeWidth/2).attr("y", node.y + 40 + kubeProxyHeight/2).attr("text-anchor", "middle").attr("dy", "0.35em").attr("fill", "white").style("font-size", "10px");
+                });
+
+                const podRadius = Math.min(nodeWidth * 0.15, 35);
+                const pods = [
+                    { x: nodes[0].x + nodeWidth * 0.5, y: nodes[0].y + nodeHeight * 0.7, node: 0 },
+                    { x: nodes[1].x + nodeWidth * 0.3, y: nodes[1].y + nodeHeight * 0.8, node: 1 },
+                    { x: nodes[1].x + nodeWidth * 0.7, y: nodes[1].y + nodeHeight * 0.6, node: 1 }
+                ];
+                pods.forEach((p, i) => {
+                    const podGroup = svg.append("g").attr("id", `pod-${i}`);
+                    podGroup.append("circle").attr("cx", p.x).attr("cy", p.y).attr("r", podRadius).attr("fill", "rgba(168, 85, 247, 0.6)");
+                    podGroup.append("text").text("Pod").attr("x", p.x).attr("y", p.y).attr("text-anchor", "middle").attr("dy", "0.35em").attr("fill", "white").style("font-size","12px");
+                });
+
+                const clusterIpY = nodesY - (nodeHeight * 0.4);
+                const netCenter = clusterPadding.left + clusterWidth / 2;
+                const servicePos = { x: netCenter - 120, y: clusterIpY };
+                
+                const defs = svg.append("defs");
+                defs.append("marker").attr("id", "arrow-yellow").attr("viewBox", "0 -5 10 10").attr("refX", 5).attr("refY", 0).attr("markerWidth", 6).attr("markerHeight", 6).attr("orient", "auto").append("path").attr("d", "M0,-5L10,0L0,5").attr("fill", "#FBBF24");
+                defs.append("marker").attr("id", "arrow-green").attr("viewBox", "0 -5 10 10").attr("refX", 5).attr("refY", 0).attr("markerWidth", 6).attr("markerHeight", 6).attr("orient", "auto").append("path").attr("d", "M0,-5L10,0L0,5").attr("fill", "#34D399");
+                defs.append("marker").attr("id", "arrow-bright-yellow").attr("viewBox", "0 -5 10 10").attr("refX", 5).attr("refY", 0).attr("markerWidth", 6).attr("markerHeight", 6).attr("orient", "auto").append("path").attr("d", "M0,-5L10,0L0,5").attr("fill", "#FFFF00");
+
+                if (type !== "initial") {
+                     const clusterIpService = svg.append("g");
+                     clusterIpService.append("rect").attr("x", servicePos.x - 55).attr("y", servicePos.y - 20).attr("width", 110).attr("height", 40).attr("rx", 8).attr("fill", "rgba(59, 130, 246, 0.6)").attr("stroke", "rgba(59, 130, 246, 1)");
+                     clusterIpService.append("text").text("ClusterIP").attr("x", servicePos.x).attr("y", servicePos.y).attr("text-anchor", "middle").attr("dy", "0.35em").attr("fill","white");
+                     pods.forEach(p => {
+                         svg.append("line").attr("x1", servicePos.x).attr("y1", servicePos.y + 20).attr("x2", p.x).attr("y2", p.y - podRadius).attr("stroke", "rgba(59, 130, 246, 0.8)").attr("stroke-width", 1.5);
+                     });
+                }
+                
+                const externalPos = {x: width/2, y: height * 0.05};
+                const externalUser = svg.append("g");
+                if (type !== "ClusterIP" && type !== "initial") {
+                    externalUser.append("text").text("Internet").attr("x", externalPos.x).attr("y", externalPos.y).attr("text-anchor", "middle").attr("fill", "white");
+                }
+                
+                if (type === "NodePort") {
+                    const nodePortPos = {x: netCenter + 120, y: servicePos.y};
+                    const nodePortLabelBox = svg.append('g');
+                    nodePortLabelBox.append('rect')
+                         .attr('x', nodePortPos.x - 55).attr('y', nodePortPos.y - 15)
+                         .attr('width', 110).attr('height', 30)
+                         .attr('rx', 5)
+                         .attr('fill', 'rgba(52, 211, 153, 0.2)')
+                         .attr('stroke', 'rgba(52, 211, 153, 1)');
+                    nodePortLabelBox.append("text").text("NodeIP:Port").attr("x", nodePortPos.x).attr("y", nodePortPos.y).attr("text-anchor", "middle").attr('dy', '0.35em').attr("fill", "#A7F3D0").style("font-size", "12px");
+                    
+                    svg.append("line").attr("class", "traffic-line").attr("x1", externalPos.x).attr("y1", externalPos.y + 20).attr("x2", nodePortPos.x).attr("y2", nodePortPos.y - 15).attr("stroke", "#FBBF24").attr("stroke-width", 2).attr("marker-end", "url(#arrow-yellow)");
+                    
+                    nodes.forEach((node, i) => {
+                        const kubeProxyPos = { x: node.x + nodeWidth/2, y: node.y + 40 };
+                        svg.append("line").attr("x1", nodePortPos.x).attr("y1", nodePortPos.y + 15).attr("x2", kubeProxyPos.x - 10).attr("y2", kubeProxyPos.y).attr("stroke", "#34D399").attr("stroke-width", 1.5).attr("stroke-dasharray", "5,5").attr("marker-end", "url(#arrow-green)");
+                        const targetX = servicePos.x + (i === 0 ? -30 : 30);
+                        svg.append("line").attr("x1", kubeProxyPos.x + 10).attr("y1", kubeProxyPos.y + 25).attr("x2", targetX).attr("y2", servicePos.y + 20).attr("stroke", "#FFFF00").attr("stroke-width", 1.5).attr("stroke-dasharray", "5,5").attr("marker-end", "url(#arrow-bright-yellow)");
+                    });
+                }
+                
+                if (type === "LoadBalancer") {
+                    const lbPos = {x: width/2, y: clusterPadding.top + 50};
+                    svg.append("rect").attr("x", lbPos.x-60).attr("y", lbPos.y-20).attr("width", 120).attr("height", 40).attr("rx",8).attr("fill","rgba(249, 115, 22, 0.6)").attr("stroke", "rgba(249, 115, 22, 1)");
+                    svg.append("text").text("LoadBalancer").attr("x", lbPos.x).attr("y", lbPos.y).attr("text-anchor", "middle").attr("dy", "0.35em").attr("fill","white");
+                    svg.append("line").attr("class", "traffic-line").attr("x1", externalPos.x).attr("y1", externalPos.y + 20).attr("x2", lbPos.x).attr("y2", lbPos.y - 20).attr("stroke", "#FBBF24").attr("stroke-width", 2).attr("marker-end", "url(#arrow-yellow)");
+                    svg.append("line").attr("x1", lbPos.x).attr("y1", lbPos.y + 20).attr("x2", servicePos.x).attr("y2", servicePos.y-25).attr("stroke", "#FBBF24").attr("stroke-width", 1.5).attr("stroke-dasharray", "5,5").attr("marker-end", "url(#arrow-yellow)");
+                }
+            }
+
+            buttons.clusterip.on("click", () => drawVisualization("ClusterIP"));
+            buttons.nodeport.on("click", () => drawVisualization("NodePort"));
+            buttons.loadbalancer.on("click", () => drawVisualization("LoadBalancer"));
+            buttons.reset.on("click", () => drawVisualization("initial"));
+            
+            window.addEventListener('resize', resize);
+            resize();
+        });
+    </script>
+</body>
+</html>

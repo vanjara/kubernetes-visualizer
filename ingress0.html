@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kubernetes Ingress Explorer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .control-panel { 
+            backdrop-filter: blur(10px); 
+            -webkit-backdrop-filter: blur(10px);
+            position: sticky;
+            top: 0;
+            height: 100vh;
+        }
+        .traffic-line {
+            stroke-dasharray: 5;
+            animation: dash 1s linear infinite;
+        }
+        @keyframes dash {
+            to { stroke-dashoffset: -10; }
+        }
+        .control-btn { transition: all 0.2s ease-in-out; }
+        .control-btn.active {
+             transform: scale(1.05);
+             box-shadow: 0 0 15px rgba(59, 130, 246, 0.5);
+        }
+        .highlight-rule {
+            background-color: rgba(255, 255, 0, 0.15);
+            border-left: 2px solid yellow;
+            transition: all 0.3s ease-in-out;
+        }
+        .clickable-component {
+            cursor: pointer;
+        }
+        .tooltip {
+            position: absolute;
+            text-align: center;
+            width: auto;
+            height: auto;
+            padding: 8px;
+            font: 12px sans-serif;
+            background: lightsteelblue;
+            border: 0px;
+            border-radius: 8px;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+        #info-modal-overlay {
+            transition: opacity 0.3s ease-in-out;
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-white flex h-screen">
+
+    <!-- Main Visualization -->
+    <div id="viz-container" class="flex-grow relative">
+        <svg id="ingress-viz" class="w-full h-full"></svg>
+        <div class="tooltip"></div>
+    </div>
+
+    <!-- Control Panel -->
+    <div class="w-96 flex-shrink-0 bg-gray-800 bg-opacity-70 p-6 shadow-2xl overflow-y-auto control-panel">
+        <h2 class="text-2xl font-bold mb-6 text-cyan-400">Ingress Routing</h2>
+        <p class="text-sm text-gray-400 mb-4">Simulate external requests to see how the Ingress Controller routes traffic based on the URL path.</p>
+        <div class="space-y-3 mb-6">
+            <h3 class="text-lg font-semibold text-gray-300">Simulate Request to:</h3>
+            <button id="btn-path-root" class="control-btn w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-lg">
+                your-app.com<span class="font-light">/</span>
+            </button>
+            <button id="btn-path-api" class="control-btn w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 px-4 rounded-lg">
+                your-app.com<span class="font-light">/api</span>
+            </button>
+            <button id="btn-reset" class="control-btn w-full bg-gray-600 hover:bg-gray-700 text-white font-bold py-3 px-4 rounded-lg mt-4">
+                Reset
+            </button>
+        </div>
+
+        <div id="explanation-box" class="bg-gray-900 p-4 rounded-lg h-auto">
+            <h3 id="exp-title" class="text-lg font-bold text-cyan-400 mb-2">Ingress Resource (The Rules)</h3>
+            <pre id="ingress-yaml" class="text-xs whitespace-pre-wrap"><code><span class="text-gray-500">apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: my-app-ingress
+spec:
+  rules:
+  - http:
+      paths:
+      <span id="rule-root">
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: web-service
+            port:
+              number: 80</span>
+      <span id="rule-api">
+      - path: /api
+        pathType: Prefix
+        backend:
+          service:
+            name: api-service
+            port:
+              number: 8080</span>
+</code></pre>
+        </div>
+    </div>
+
+    <!-- Info Modal -->
+    <div id="info-modal-overlay" class="fixed inset-0 bg-black bg-opacity-60 hidden justify-center items-center z-50">
+        <div id="info-modal" class="bg-gray-800 border border-cyan-400 text-white rounded-lg shadow-xl p-6 w-full max-w-md m-4">
+            <div class="flex justify-between items-center mb-4 border-b border-gray-700 pb-3">
+                <h3 id="modal-title" class="text-xl font-bold text-cyan-400">Component Info</h3>
+                <button id="modal-close-btn" class="text-gray-400 hover:text-white text-3xl leading-none">&times;</button>
+            </div>
+            <div id="modal-content" class="text-gray-300">
+                <p>Details about the component.</p>
+            </div>
+        </div>
+    </div>
+
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const svg = d3.select("#ingress-viz");
+            const vizContainer = document.getElementById('viz-container');
+            const tooltip = d3.select(".tooltip");
+            let width, height;
+
+            const buttons = {
+                root: d3.select("#btn-path-root"),
+                api: d3.select("#btn-path-api"),
+                reset: d3.select("#btn-reset")
+            };
+            const ruleSpans = {
+                root: d3.select("#rule-root"),
+                api: d3.select("#rule-api")
+            };
+
+            const modalOverlay = document.getElementById('info-modal-overlay');
+            const modalTitle = document.getElementById('modal-title');
+            const modalContent = document.getElementById('modal-content');
+            const modalCloseBtn = document.getElementById('modal-close-btn');
+            
+            const componentInfo = {
+                "Ingress Controller": "The Ingress Controller is the engine that makes Ingress rules work. It's a pod (or set of pods) running in the cluster that constantly watches for Ingress resources. When it sees one, it configures an underlying load balancer (like Nginx or HAProxy) to implement the specified routing rules.",
+                // Add other descriptions here if needed
+            };
+
+
+            function resize() {
+                width = vizContainer.clientWidth;
+                height = vizContainer.clientHeight;
+                svg.attr("width", width).attr("height", height);
+                drawVisualization();
+            }
+
+            function setupComponentInteraction(selection, componentName) {
+                selection
+                    .on("mouseover", function(event) {
+                        if (modalOverlay.classList.contains('hidden')) {
+                            d3.select(this).selectAll("rect").attr("filter", "url(#glow)");
+                            tooltip.transition().duration(200).style("opacity", .9);
+                            tooltip.html(componentName).style("left", (event.pageX + 15) + "px").style("top", (event.pageY - 28) + "px");
+                        }
+                    })
+                    .on("mouseout", function() {
+                        d3.select(this).selectAll("rect").attr("filter", null);
+                        tooltip.transition().duration(500).style("opacity", 0);
+                    })
+                    .on("click", function(event) {
+                        event.stopPropagation();
+                        modalTitle.textContent = componentName;
+                        modalContent.innerHTML = `<p>${componentInfo[componentName]}</p>`;
+                        modalOverlay.classList.remove('hidden');
+                        modalOverlay.classList.add('flex');
+                    });
+            }
+
+
+            function drawVisualization(activePath = null) {
+                svg.selectAll("*").remove();
+                
+                Object.values(buttons).forEach(btn => btn.classed('active', false));
+                Object.values(ruleSpans).forEach(span => span.classed('highlight-rule', false));
+
+                if (activePath) {
+                    buttons[activePath].classed('active', true);
+                    ruleSpans[activePath].classed('highlight-rule', true);
+                }
+
+                // --- Layout Constants ---
+                const clusterPadding = { top: height * 0.1, bottom: height * 0.1, left: width * 0.1, right: width * 0.1 };
+                const clusterWidth = width - clusterPadding.left - clusterPadding.right;
+                const clusterHeight = height - clusterPadding.top - clusterPadding.bottom;
+
+                // --- Cluster ---
+                svg.append("rect").attr("x", clusterPadding.left).attr("y", clusterPadding.top).attr("width", clusterWidth).attr("height", clusterHeight).attr("rx", 15).attr("fill", "rgba(255, 255, 255, 0.05)").attr("stroke", "rgba(59, 130, 246, 0.5)").attr("stroke-dasharray", "10,5");
+                svg.append("text").text("Kubernetes Cluster").attr("x", clusterPadding.left + clusterWidth - 20).attr("y", clusterPadding.top + 30).attr("fill", "rgba(59, 130, 246, 0.7)").attr("text-anchor", "end");
+
+                // --- Services & Pods ---
+                const serviceWidth = 100, serviceHeight = 40, podRadius = 25;
+                const webServicePos = { x: clusterPadding.left + clusterWidth * 0.25, y: clusterPadding.top + clusterHeight * 0.75 };
+                const apiServicePos = { x: clusterPadding.left + clusterWidth * 0.75, y: clusterPadding.top + clusterHeight * 0.75 };
+
+                // Web App
+                svg.append("rect").attr("x", webServicePos.x - serviceWidth/2).attr("y", webServicePos.y - serviceHeight/2).attr("width", serviceWidth).attr("height", serviceHeight).attr("rx", 8).attr("fill", "rgba(59, 130, 246, 0.6)");
+                svg.append("text").text("web-service").attr("x", webServicePos.x).attr("y", webServicePos.y).attr("text-anchor", "middle").attr("dy", "0.35em").attr("fill","white").style("font-size", "12px");
+                svg.append("circle").attr("cx", webServicePos.x).attr("cy", webServicePos.y + serviceHeight/2 + podRadius + 10).attr("r", podRadius).attr("fill", "rgba(59, 130, 246, 0.3)");
+                svg.append("text").text("Pod").attr("x", webServicePos.x).attr("y", webServicePos.y + serviceHeight/2 + podRadius + 10).attr("text-anchor","middle").attr("dy", "0.35em").attr("fill", "white").style("font-size","12px");
+                
+                // API App
+                svg.append("rect").attr("x", apiServicePos.x - serviceWidth/2).attr("y", apiServicePos.y - serviceHeight/2).attr("width", serviceWidth).attr("height", serviceHeight).attr("rx", 8).attr("fill", "rgba(168, 85, 247, 0.6)");
+                svg.append("text").text("api-service").attr("x", apiServicePos.x).attr("y", apiServicePos.y).attr("text-anchor", "middle").attr("dy", "0.35em").attr("fill","white").style("font-size", "12px");
+                svg.append("circle").attr("cx", apiServicePos.x).attr("cy", apiServicePos.y + serviceHeight/2 + podRadius + 10).attr("r", podRadius).attr("fill", "rgba(168, 85, 247, 0.3)");
+                svg.append("text").text("Pod").attr("x", apiServicePos.x).attr("y", apiServicePos.y + serviceHeight/2 + podRadius + 10).attr("text-anchor", "middle").attr("dy", "0.35em").attr("fill", "white").style("font-size","12px");
+
+
+                // --- Ingress Controller and LB ---
+                const lbPos = {x: width/2, y: clusterPadding.top + 40};
+                const ingressControllerPos = {x: width/2, y: clusterPadding.top + clusterHeight * 0.3};
+                
+                svg.append("rect").attr("x", lbPos.x-60).attr("y", lbPos.y-20).attr("width", 120).attr("height", 40).attr("rx",8).attr("fill","rgba(249, 115, 22, 0.6)");
+                svg.append("text").text("LoadBalancer").attr("x", lbPos.x).attr("y", lbPos.y).attr("text-anchor", "middle").attr("dy", "0.35em").attr("fill","white");
+
+                const ingressGroup = svg.append("g").attr("class", "clickable-component");
+                ingressGroup.append("rect").attr("x", ingressControllerPos.x - 75).attr("y", ingressControllerPos.y - 30).attr("width", 150).attr("height", 60).attr("rx",8).attr("fill","rgba(20, 184, 166, 0.6)");
+                ingressGroup.append("text").text("Ingress Controller").attr("x", ingressControllerPos.x).attr("y", ingressControllerPos.y).attr("text-anchor", "middle").attr("dy", "0.35em").attr("fill","white");
+                setupComponentInteraction(ingressGroup, "Ingress Controller");
+
+                // --- Traffic Lines ---
+                const defs = svg.append("defs");
+                const addMarker = (id, color) => defs.append("marker").attr("id", id).attr("viewBox", "0 -5 10 10").attr("refX", 5).attr("refY", 0).attr("markerWidth", 6).attr("markerHeight", 6).attr("orient", "auto").append("path").attr("d", "M0,-5L10,0L0,5").attr("fill", color);
+                addMarker("arrow-yellow", "#FBBF24");
+                addMarker("arrow-blue", "rgba(59, 130, 246, 1)");
+                addMarker("arrow-purple", "rgba(168, 85, 247, 1)");
+                const filter = defs.append("filter").attr("id", "glow").attr('x', '-50%').attr('y', '-50%').attr('width', '200%').attr('height', '200%');
+                filter.append("feGaussianBlur").attr("stdDeviation", "4").attr("result", "coloredBlur");
+                const feMerge = filter.append("feMerge");
+                feMerge.append("feMergeNode").attr("in", "coloredBlur");
+                feMerge.append("feMergeNode").attr("in", "SourceGraphic");
+
+                // Internet -> LB -> Ingress Controller
+                svg.append("text").text("Internet").attr("x", lbPos.x).attr("y", lbPos.y - 40).attr("text-anchor", "middle").attr("fill", "white");
+                svg.append("line").attr("x1", lbPos.x).attr("y1", lbPos.y - 20).attr("x2", lbPos.x).attr("y2", lbPos.y - 40).attr("stroke", "#FBBF24").attr("stroke-width", 2);
+                svg.append("line").attr("x1", lbPos.x).attr("y1", lbPos.y + 20).attr("x2", ingressControllerPos.x).attr("y2", ingressControllerPos.y - 30).attr("stroke", "#FBBF24").attr("stroke-width", 2).attr("marker-end", "url(#arrow-yellow)");
+
+                if (activePath === 'root') {
+                    svg.append("line").attr("class", "traffic-line").attr("x1", ingressControllerPos.x).attr("y1", ingressControllerPos.y + 30).attr("x2", webServicePos.x).attr("y2", webServicePos.y - serviceHeight/2).attr("stroke", "rgba(59, 130, 246, 1)").attr("stroke-width", 2).attr("marker-end", "url(#arrow-blue)");
+                }
+                if (activePath === 'api') {
+                    svg.append("line").attr("class", "traffic-line").attr("x1", ingressControllerPos.x).attr("y1", ingressControllerPos.y + 30).attr("x2", apiServicePos.x).attr("y2", apiServicePos.y - serviceHeight/2).attr("stroke", "rgba(168, 85, 247, 1)").attr("stroke-width", 2).attr("marker-end", "url(#arrow-purple)");
+                }
+
+            }
+
+            // --- Event Listeners ---
+            buttons.root.on("click", () => drawVisualization("root"));
+            buttons.api.on("click", () => drawVisualization("api"));
+            buttons.reset.on("click", () => drawVisualization());
+            
+            modalCloseBtn.addEventListener('click', () => modalOverlay.classList.add('hidden'));
+            modalOverlay.addEventListener('click', (e) => { if (e.target === modalOverlay) modalOverlay.classList.add('hidden'); });
+
+            window.addEventListener('resize', resize);
+            resize();
+        });
+    </script>
+</body>
+</html>
