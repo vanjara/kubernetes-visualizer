@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kubernetes HPA Explorer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .control-panel { 
+            backdrop-filter: blur(10px); 
+            -webkit-backdrop-filter: blur(10px);
+            position: sticky;
+            top: 0;
+            height: 100vh;
+        }
+        .control-btn { transition: all 0.2s ease-in-out; }
+        .control-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .cpu-bar {
+            transition: width 0.5s ease-in-out, background-color 0.5s ease-in-out;
+        }
+        .clickable-component {
+            cursor: pointer;
+        }
+        .tooltip {
+            position: absolute;
+            text-align: center;
+            width: auto;
+            height: auto;
+            padding: 8px;
+            font: 12px sans-serif;
+            background: lightsteelblue;
+            border: 0px;
+            border-radius: 8px;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+        #info-modal-overlay {
+            transition: opacity 0.3s ease-in-out;
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-white flex h-screen">
+
+    <!-- Main Visualization -->
+    <div id="viz-container" class="flex-grow relative">
+        <svg id="viz" class="w-full h-full"></svg>
+        <div class="tooltip"></div>
+    </div>
+
+    <!-- Control Panel -->
+    <div class="w-96 flex-shrink-0 bg-gray-800 bg-opacity-70 p-6 shadow-2xl overflow-y-auto control-panel">
+        <!-- Back Button -->
+        <div class="mb-6">
+            <a href="index.html" class="inline-flex items-center text-sm text-cyan-400 hover:text-cyan-300 transition-colors">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+                </svg>
+                Back to Learning Path
+            </a>
+        </div>
+
+        <h2 class="text-2xl font-bold mb-6 text-cyan-400">Horizontal Pod Autoscaler</h2>
+        <p class="text-sm text-gray-400 mb-4">Simulate CPU load to see the HPA automatically scale the number of pods.</p>
+        
+        <div class="mb-6">
+            <h3 class="text-lg font-semibold text-gray-300">Control CPU Load</h3>
+            <div class="flex items-center space-x-2 mt-2">
+                <button id="btn-decrease-cpu" class="control-btn bg-red-600 hover:bg-red-700 rounded-full w-10 h-10 text-2xl">-</button>
+                <div class="w-full bg-gray-700 rounded-full h-6">
+                    <div id="cpu-bar-display" class="cpu-bar bg-green-500 h-6 rounded-full text-xs text-white text-center flex items-center justify-center">
+                        <span id="cpu-percentage">0%</span>
+                    </div>
+                </div>
+                <button id="btn-increase-cpu" class="control-btn bg-green-600 hover:bg-green-700 rounded-full w-10 h-10 text-2xl">+</button>
+            </div>
+        </div>
+
+        <button id="btn-reset" class="control-btn w-full bg-gray-600 hover:bg-gray-700 text-white font-bold py-3 px-4 rounded-lg mt-4">
+            Reset Simulation
+        </button>
+        
+        <div class="space-y-4 mt-6">
+            <div>
+                 <h3 class="text-lg font-bold text-cyan-400 mb-2">HPA YAML</h3>
+                 <pre id="hpa-yaml" class="text-xs whitespace-pre-wrap bg-gray-900 p-2 rounded-lg text-gray-400 h-40 overflow-auto"></pre>
+            </div>
+            <div>
+                 <h3 class="text-lg font-bold text-cyan-400 mb-2">Deployment Status</h3>
+                 <pre id="dep-yaml" class="text-xs whitespace-pre-wrap bg-gray-900 p-2 rounded-lg text-gray-400 h-32 overflow-auto"></pre>
+            </div>
+        </div>
+    </div>
+
+    <!-- Info Modal -->
+    <div id="info-modal-overlay" class="fixed inset-0 bg-black bg-opacity-60 hidden justify-center items-center z-50">
+        <div id="info-modal" class="bg-gray-800 border border-cyan-400 text-white rounded-lg shadow-xl p-6 w-full max-w-md m-4">
+            <div class="flex justify-between items-center mb-4 border-b border-gray-700 pb-3">
+                <h3 id="modal-title" class="text-xl font-bold text-cyan-400">Component Info</h3>
+                <button id="modal-close-btn" class="text-gray-400 hover:text-white text-3xl leading-none">&times;</button>
+            </div>
+            <div id="modal-content" class="text-gray-300">
+                <p>Details about the component.</p>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const svg = d3.select("#viz");
+            const vizContainer = document.getElementById('viz-container');
+            const tooltip = d3.select(".tooltip");
+            let width, height;
+
+            const buttons = {
+                increase: d3.select("#btn-increase-cpu"),
+                decrease: d3.select("#btn-decrease-cpu"),
+                reset: d3.select("#btn-reset")
+            };
+            const cpuBar = d3.select("#cpu-bar-display");
+            const cpuPercentageText = d3.select("#cpu-percentage");
+            const hpaYamlPre = d3.select("#hpa-yaml");
+            const depYamlPre = d3.select("#dep-yaml");
+            
+            const modalOverlay = document.getElementById('info-modal-overlay');
+            const modalTitle = document.getElementById('modal-title');
+            const modalContent = document.getElementById('modal-content');
+            const modalCloseBtn = document.getElementById('modal-close-btn');
+
+            const componentInfo = {
+                "HPA Controller": "The Horizontal Pod Autoscaler (HPA) Controller is a core part of the Kubernetes control plane. It periodically checks metrics (like CPU utilization) from pods and compares them to the target defined in the HPA resource. If the current metric is different from the target, the controller adjusts the number of replicas in the Deployment or ReplicaSet.",
+            };
+
+            const HPA_CONFIG = {
+                minReplicas: 2,
+                maxReplicas: 10,
+                targetCPUUtilizationPercentage: 50
+            };
+
+            let state = {
+                currentReplicas: HPA_CONFIG.minReplicas,
+                currentCpu: 10
+            };
+            
+            function resize() {
+                width = vizContainer.clientWidth;
+                height = vizContainer.clientHeight;
+                svg.attr("width", width).attr("height", height);
+                drawVisualization();
+            }
+
+            function setupComponentInteraction(selection, componentName) {
+                selection
+                    .on("mouseover", function(event) {
+                        if (modalOverlay.classList.contains('hidden')) {
+                            d3.select(this).selectAll("rect").attr("filter", "url(#glow)");
+                            tooltip.transition().duration(200).style("opacity", .9);
+                            tooltip.html(componentName).style("left", (event.pageX + 15) + "px").style("top", (event.pageY - 28) + "px");
+                        }
+                    })
+                    .on("mouseout", function() {
+                        d3.select(this).selectAll("rect").attr("filter", null);
+                        tooltip.transition().duration(500).style("opacity", 0);
+                    })
+                    .on("click", function(event) {
+                        event.stopPropagation();
+                        modalTitle.textContent = componentName;
+                        modalContent.innerHTML = `<p>${componentInfo[componentName]}</p>`;
+                        modalOverlay.classList.remove('hidden');
+                        modalOverlay.classList.add('flex');
+                    });
+            }
+
+            function updateMetricsAndYAML() {
+                cpuBar.style("width", `${state.currentCpu}%`);
+                let barColor = "bg-green-500";
+                if(state.currentCpu > HPA_CONFIG.targetCPUUtilizationPercentage) barColor = "bg-red-500";
+                else if (state.currentCpu > HPA_CONFIG.targetCPUUtilizationPercentage * 0.8) barColor = "bg-yellow-500";
+                cpuBar.attr('class', `cpu-bar ${barColor} h-6 rounded-full text-xs text-white text-center flex items-center justify-center`);
+                cpuPercentageText.text(`${state.currentCpu}%`);
+                
+                hpaYamlPre.html(`apiVersion: autoscaling/v1
+kind: HorizontalPodAutoscaler
+metadata:
+  name: my-app-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: my-app
+  minReplicas: ${HPA_CONFIG.minReplicas}
+  maxReplicas: ${HPA_CONFIG.maxReplicas}
+  targetCPUUtilizationPercentage: ${HPA_CONFIG.targetCPUUtilizationPercentage}`);
+
+                depYamlPre.html(`...
+spec:
+  replicas: <span class="text-yellow-300 font-bold">${state.currentReplicas}</span>
+  ...
+status:
+  replicas: ${state.currentReplicas}
+  readyReplicas: ${state.currentReplicas}`);
+            }
+            
+            function calculateDesiredReplicas(cpu, currentReplicas) {
+                 return Math.ceil(currentReplicas * (cpu / HPA_CONFIG.targetCPUUtilizationPercentage));
+            }
+
+            function autoscale() {
+                const desiredReplicas = calculateDesiredReplicas(state.currentCpu, state.currentReplicas);
+                let newReplicas = Math.max(HPA_CONFIG.minReplicas, Math.min(HPA_CONFIG.maxReplicas, desiredReplicas));
+                
+                if (newReplicas !== state.currentReplicas) {
+                    state.currentReplicas = newReplicas;
+                }
+                drawVisualization();
+            }
+
+            function drawVisualization() {
+                svg.selectAll("*").remove();
+                
+                const defs = svg.append("defs");
+                const filter = defs.append("filter").attr("id", "glow").attr('x', '-50%').attr('y', '-50%').attr('width', '200%').attr('height', '200%');
+                filter.append("feGaussianBlur").attr("stdDeviation", "8").attr("result", "coloredBlur");
+                const feMerge = filter.append("feMerge");
+                feMerge.append("feMergeNode").attr("in", "coloredBlur");
+                feMerge.append("feMergeNode").attr("in", "SourceGraphic");
+
+                const centerX = width / 2;
+                const centerY = height / 2;
+                const podRadius = 25;
+                const clusterRadius = Math.min(width, height) * 0.35;
+
+                const hpaGroup = svg.append("g").attr("class", "clickable-component");
+                hpaGroup.append("rect").attr("x", centerX - 75).attr("y", 50).attr("width", 150).attr("height", 50).attr("rx", 8).attr("fill", "rgba(20, 184, 166, 0.6)");
+                hpaGroup.append("text").text("HPA Controller").attr("x", centerX).attr("y", 75).attr("text-anchor", "middle").attr("dy", "0.35em").attr("fill", "white");
+                setupComponentInteraction(hpaGroup, "HPA Controller");
+
+                svg.append("rect")
+                    .attr("x", centerX - clusterRadius - 20).attr("y", centerY - clusterRadius - 20)
+                    .attr("width", (clusterRadius + 20) * 2).attr("height", (clusterRadius + 20) * 2)
+                    .attr("rx", 15).attr("fill", "rgba(59, 130, 246, 0.1)").attr("stroke", "rgba(59, 130, 246, 0.5)").attr("stroke-dasharray", "5,5");
+                svg.append("text").text("Deployment").attr("x", centerX).attr("y", centerY - clusterRadius).attr("text-anchor", "middle").attr("fill", "white");
+                
+                const angleStep = 360 / state.currentReplicas;
+                for (let i = 0; i < state.currentReplicas; i++) {
+                    const angle = (angleStep * i - 90) * (Math.PI / 180); // Start from top
+                    const x = centerX + Math.cos(angle) * (clusterRadius * 0.7);
+                    const y = centerY + Math.sin(angle) * (clusterRadius * 0.7);
+                    
+                    const podGroup = svg.append("g").attr("transform", `translate(${x}, ${y})`);
+                    podGroup.append("circle").attr("r", podRadius).attr("fill", "rgba(168, 85, 247, 0.6)");
+                    podGroup.append("text").text("Pod").attr("text-anchor", "middle").attr("dy", "0.35em").attr("fill", "white").style("font-size", "12px");
+                }
+
+                svg.append("path")
+                    .attr("d", `M ${centerX},100 C ${centerX - 100} 150, ${centerX - clusterRadius - 50} ${centerY}, ${centerX - clusterRadius - 20} ${centerY}`)
+                    .attr("stroke", "rgba(20, 184, 166, 0.8)").attr("stroke-width", 2).attr("fill", "none");
+                
+                updateMetricsAndYAML();
+                
+                buttons.increase.property('disabled', state.currentReplicas >= HPA_CONFIG.maxReplicas);
+                buttons.decrease.property('disabled', state.currentReplicas <= HPA_CONFIG.minReplicas && state.currentCpu <= 10);
+            }
+            
+            function reset() {
+                state.currentReplicas = HPA_CONFIG.minReplicas;
+                state.currentCpu = 10;
+                drawVisualization();
+            }
+
+            modalCloseBtn.addEventListener('click', () => modalOverlay.classList.add('hidden'));
+            modalOverlay.addEventListener('click', (e) => { if (e.target === modalOverlay) modalOverlay.classList.add('hidden'); });
+
+            buttons.increase.on("click", () => {
+                if (state.currentReplicas >= HPA_CONFIG.maxReplicas) return;
+                
+                let nextCpu = state.currentCpu;
+                for (let cpu = state.currentCpu + 10; cpu <= 100; cpu += 10) {
+                    if (calculateDesiredReplicas(cpu, state.currentReplicas) > state.currentReplicas) {
+                        nextCpu = cpu;
+                        break;
+                    }
+                }
+                if (nextCpu === state.currentCpu) {
+                    nextCpu = Math.min(100, state.currentCpu + 10);
+                }
+                state.currentCpu = nextCpu;
+                autoscale();
+            });
+            
+            buttons.decrease.on("click", () => {
+                if (state.currentReplicas <= HPA_CONFIG.minReplicas && state.currentCpu <= 10) return;
+
+                let nextCpu = state.currentCpu;
+                for (let cpu = state.currentCpu - 10; cpu >= 0; cpu -= 10) {
+                     if (calculateDesiredReplicas(cpu, state.currentReplicas) < state.currentReplicas) {
+                        nextCpu = cpu;
+                        break;
+                    }
+                }
+                if(nextCpu === state.currentCpu){
+                     nextCpu = Math.max(0, state.currentCpu - 10);
+                }
+                 state.currentCpu = nextCpu;
+                 autoscale();
+            });
+
+            buttons.reset.on("click", reset);
+
+            window.addEventListener('resize', resize);
+            resize();
+            reset();
+        });
+    </script>
+</body>
+</html>
