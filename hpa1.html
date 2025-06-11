@@ -18,7 +18,7 @@
         }
         .control-btn { transition: all 0.2s ease-in-out; }
         .control-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-        .metric-bar {
+        .cpu-bar {
             transition: width 0.5s ease-in-out, background-color 0.5s ease-in-out;
         }
         .clickable-component {
@@ -40,13 +40,6 @@
         }
         #info-modal-overlay {
             transition: opacity 0.3s ease-in-out;
-        }
-        .scaling-text {
-            animation: pulse 1.5s ease-in-out infinite;
-        }
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.6; }
         }
     </style>
 </head>
@@ -71,32 +64,18 @@
         </div>
 
         <h2 class="text-2xl font-bold mb-6 text-cyan-400">Horizontal Pod Autoscaler</h2>
-        <p class="text-sm text-gray-400 mb-4">Simulate CPU and Memory load to see the HPA automatically scale the number of pods.</p>
+        <p class="text-sm text-gray-400 mb-4">Simulate CPU load to see the HPA automatically scale the number of pods.</p>
         
-        <div class="mb-6 space-y-4">
-            <div>
-                <h3 class="text-lg font-semibold text-gray-300">Control CPU Load</h3>
-                <div class="flex items-center space-x-2 mt-2">
-                    <button id="btn-decrease-cpu" class="control-btn bg-red-600 hover:bg-red-700 rounded-full w-10 h-10 text-2xl">-</button>
-                    <div class="w-full bg-gray-700 rounded-full h-6">
-                        <div id="cpu-bar-display" class="metric-bar bg-green-500 h-6 rounded-full text-xs text-white text-center flex items-center justify-center">
-                            <span id="cpu-percentage">0%</span>
-                        </div>
+        <div class="mb-6">
+            <h3 class="text-lg font-semibold text-gray-300">Control CPU Load</h3>
+            <div class="flex items-center space-x-2 mt-2">
+                <button id="btn-decrease-cpu" class="control-btn bg-red-600 hover:bg-red-700 rounded-full w-10 h-10 text-2xl">-</button>
+                <div class="w-full bg-gray-700 rounded-full h-6">
+                    <div id="cpu-bar-display" class="cpu-bar bg-green-500 h-6 rounded-full text-xs text-white text-center flex items-center justify-center">
+                        <span id="cpu-percentage">0%</span>
                     </div>
-                    <button id="btn-increase-cpu" class="control-btn bg-green-600 hover:bg-green-700 rounded-full w-10 h-10 text-2xl">+</button>
                 </div>
-            </div>
-            <div>
-                 <h3 class="text-lg font-semibold text-gray-300">Control Memory Load</h3>
-                <div class="flex items-center space-x-2 mt-2">
-                    <button id="btn-decrease-mem" class="control-btn bg-red-600 hover:bg-red-700 rounded-full w-10 h-10 text-2xl">-</button>
-                    <div class="w-full bg-gray-700 rounded-full h-6">
-                        <div id="mem-bar-display" class="metric-bar bg-green-500 h-6 rounded-full text-xs text-white text-center flex items-center justify-center">
-                            <span id="mem-percentage">0%</span>
-                        </div>
-                    </div>
-                    <button id="btn-increase-mem" class="control-btn bg-green-600 hover:bg-green-700 rounded-full w-10 h-10 text-2xl">+</button>
-                </div>
+                <button id="btn-increase-cpu" class="control-btn bg-green-600 hover:bg-green-700 rounded-full w-10 h-10 text-2xl">+</button>
             </div>
         </div>
 
@@ -107,7 +86,7 @@
         <div class="space-y-4 mt-6">
             <div>
                  <h3 class="text-lg font-bold text-cyan-400 mb-2">HPA YAML</h3>
-                 <pre id="hpa-yaml" class="text-xs whitespace-pre-wrap bg-gray-900 p-2 rounded-lg text-gray-400 h-64 overflow-auto"></pre>
+                 <pre id="hpa-yaml" class="text-xs whitespace-pre-wrap bg-gray-900 p-2 rounded-lg text-gray-400 h-40 overflow-auto"></pre>
             </div>
             <div>
                  <h3 class="text-lg font-bold text-cyan-400 mb-2">Deployment Status</h3>
@@ -137,16 +116,12 @@
             let width, height;
 
             const buttons = {
-                increaseCpu: d3.select("#btn-increase-cpu"),
-                decreaseCpu: d3.select("#btn-decrease-cpu"),
-                increaseMem: d3.select("#btn-increase-mem"),
-                decreaseMem: d3.select("#btn-decrease-mem"),
+                increase: d3.select("#btn-increase-cpu"),
+                decrease: d3.select("#btn-decrease-cpu"),
                 reset: d3.select("#btn-reset")
             };
             const cpuBar = d3.select("#cpu-bar-display");
             const cpuPercentageText = d3.select("#cpu-percentage");
-            const memBar = d3.select("#mem-bar-display");
-            const memPercentageText = d3.select("#mem-percentage");
             const hpaYamlPre = d3.select("#hpa-yaml");
             const depYamlPre = d3.select("#dep-yaml");
             
@@ -162,17 +137,12 @@
             const HPA_CONFIG = {
                 minReplicas: 2,
                 maxReplicas: 10,
-                targetCPUUtilization: 50,
-                targetMemoryUtilization: 60,
-                stabilizationWindowSeconds: 30
+                targetCPUUtilizationPercentage: 50
             };
 
             let state = {
                 currentReplicas: HPA_CONFIG.minReplicas,
-                currentCpu: 10,
-                currentMem: 10,
-                isScaling: false,
-                targetReplicas: 0
+                currentCpu: 10
             };
             
             function resize() {
@@ -205,19 +175,14 @@
             }
 
             function updateMetricsAndYAML() {
-                // Update CPU Bar
                 cpuBar.style("width", `${state.currentCpu}%`);
-                let cpuBarColor = state.currentCpu > HPA_CONFIG.targetCPUUtilization ? "bg-red-500" : "bg-green-500";
-                cpuBar.attr('class', `metric-bar ${cpuBarColor} h-6 rounded-full text-xs text-white text-center flex items-center justify-center`);
+                let barColor = "bg-green-500";
+                if(state.currentCpu > HPA_CONFIG.targetCPUUtilizationPercentage) barColor = "bg-red-500";
+                else if (state.currentCpu > HPA_CONFIG.targetCPUUtilizationPercentage * 0.8) barColor = "bg-yellow-500";
+                cpuBar.attr('class', `cpu-bar ${barColor} h-6 rounded-full text-xs text-white text-center flex items-center justify-center`);
                 cpuPercentageText.text(`${state.currentCpu}%`);
-
-                // Update Memory Bar
-                memBar.style("width", `${state.currentMem}%`);
-                let memBarColor = state.currentMem > HPA_CONFIG.targetMemoryUtilization ? "bg-red-500" : "bg-green-500";
-                memBar.attr('class', `metric-bar ${memBarColor} h-6 rounded-full text-xs text-white text-center flex items-center justify-center`);
-                memPercentageText.text(`${state.currentMem}%`);
                 
-                hpaYamlPre.html(`apiVersion: autoscaling/v2
+                hpaYamlPre.html(`apiVersion: autoscaling/v1
 kind: HorizontalPodAutoscaler
 metadata:
   name: my-app-hpa
@@ -228,22 +193,7 @@ spec:
     name: my-app
   minReplicas: ${HPA_CONFIG.minReplicas}
   maxReplicas: ${HPA_CONFIG.maxReplicas}
-  metrics:
-  - type: Resource
-    resource:
-      name: cpu
-      target:
-        type: Utilization
-        averageUtilization: ${HPA_CONFIG.targetCPUUtilization}
-  - type: Resource
-    resource:
-      name: memory
-      target:
-        type: Utilization
-        averageUtilization: ${HPA_CONFIG.targetMemoryUtilization}
-  behavior:
-    scaleUp:
-      stabilizationWindowSeconds: ${HPA_CONFIG.stabilizationWindowSeconds}`);
+  targetCPUUtilizationPercentage: ${HPA_CONFIG.targetCPUUtilizationPercentage}`);
 
                 depYamlPre.html(`...
 spec:
@@ -254,33 +204,18 @@ status:
   readyReplicas: ${state.currentReplicas}`);
             }
             
-            function calculateDesiredReplicas() {
-                 const cpuRatio = state.currentCpu / HPA_CONFIG.targetCPUUtilization;
-                 const memRatio = state.currentMem / HPA_CONFIG.targetMemoryUtilization;
-                 // HPA scales based on the highest ratio
-                 const highestRatio = Math.max(cpuRatio, memRatio);
-                 return Math.ceil(state.currentReplicas * highestRatio);
+            function calculateDesiredReplicas(cpu, currentReplicas) {
+                 return Math.ceil(currentReplicas * (cpu / HPA_CONFIG.targetCPUUtilizationPercentage));
             }
 
             function autoscale() {
-                if (state.isScaling) return;
-
-                const desiredReplicas = calculateDesiredReplicas();
+                const desiredReplicas = calculateDesiredReplicas(state.currentCpu, state.currentReplicas);
                 let newReplicas = Math.max(HPA_CONFIG.minReplicas, Math.min(HPA_CONFIG.maxReplicas, desiredReplicas));
                 
                 if (newReplicas !== state.currentReplicas) {
-                    state.isScaling = true;
-                    state.targetReplicas = newReplicas;
-                    drawVisualization();
-
-                    setTimeout(() => {
-                        state.currentReplicas = state.targetReplicas;
-                        state.isScaling = false;
-                        drawVisualization();
-                    }, 2000);
-                } else {
-                    drawVisualization();
+                    state.currentReplicas = newReplicas;
                 }
+                drawVisualization();
             }
 
             function drawVisualization() {
@@ -303,23 +238,15 @@ status:
                 hpaGroup.append("text").text("HPA Controller").attr("x", centerX).attr("y", 75).attr("text-anchor", "middle").attr("dy", "0.35em").attr("fill", "white");
                 setupComponentInteraction(hpaGroup, "HPA Controller");
 
-                const deploymentGroup = svg.append("g");
-                deploymentGroup.append("rect")
+                svg.append("rect")
                     .attr("x", centerX - clusterRadius - 20).attr("y", centerY - clusterRadius - 20)
                     .attr("width", (clusterRadius + 20) * 2).attr("height", (clusterRadius + 20) * 2)
                     .attr("rx", 15).attr("fill", "rgba(59, 130, 246, 0.1)").attr("stroke", "rgba(59, 130, 246, 0.5)").attr("stroke-dasharray", "5,5");
-                deploymentGroup.append("text").text("Deployment").attr("x", centerX).attr("y", centerY - clusterRadius).attr("text-anchor", "middle").attr("fill", "white");
-                
-                if (state.isScaling) {
-                    deploymentGroup.append("text").text("SCALING...")
-                      .attr("class", "scaling-text")
-                      .attr("x", centerX).attr("y", centerY + clusterRadius - 10)
-                      .attr("text-anchor", "middle").attr("fill", "yellow");
-                }
+                svg.append("text").text("Deployment").attr("x", centerX).attr("y", centerY - clusterRadius).attr("text-anchor", "middle").attr("fill", "white");
                 
                 const angleStep = 360 / state.currentReplicas;
                 for (let i = 0; i < state.currentReplicas; i++) {
-                    const angle = (angleStep * i - 90) * (Math.PI / 180);
+                    const angle = (angleStep * i - 90) * (Math.PI / 180); // Start from top
                     const x = centerX + Math.cos(angle) * (clusterRadius * 0.7);
                     const y = centerY + Math.sin(angle) * (clusterRadius * 0.7);
                     
@@ -334,42 +261,52 @@ status:
                 
                 updateMetricsAndYAML();
                 
-                const anyIncreaseDisabled = state.isScaling || state.currentReplicas >= HPA_CONFIG.maxReplicas;
-                buttons.increaseCpu.property('disabled', anyIncreaseDisabled);
-                buttons.increaseMem.property('disabled', anyIncreaseDisabled);
-                buttons.decreaseCpu.property('disabled', state.isScaling);
-                buttons.decreaseMem.property('disabled', state.isScaling);
+                buttons.increase.property('disabled', state.currentReplicas >= HPA_CONFIG.maxReplicas);
+                buttons.decrease.property('disabled', state.currentReplicas <= HPA_CONFIG.minReplicas && state.currentCpu <= 10);
             }
             
             function reset() {
-                state.isScaling = false;
                 state.currentReplicas = HPA_CONFIG.minReplicas;
-                state.targetReplicas = HPA_CONFIG.minReplicas;
                 state.currentCpu = 10;
-                state.currentMem = 10;
                 drawVisualization();
             }
 
             modalCloseBtn.addEventListener('click', () => modalOverlay.classList.add('hidden'));
             modalOverlay.addEventListener('click', (e) => { if (e.target === modalOverlay) modalOverlay.classList.add('hidden'); });
 
-            buttons.increaseCpu.on("click", () => {
-                state.currentCpu = Math.min(100, state.currentCpu + 10);
+            buttons.increase.on("click", () => {
+                if (state.currentReplicas >= HPA_CONFIG.maxReplicas) return;
+                
+                let nextCpu = state.currentCpu;
+                for (let cpu = state.currentCpu + 10; cpu <= 100; cpu += 10) {
+                    if (calculateDesiredReplicas(cpu, state.currentReplicas) > state.currentReplicas) {
+                        nextCpu = cpu;
+                        break;
+                    }
+                }
+                if (nextCpu === state.currentCpu) {
+                    nextCpu = Math.min(100, state.currentCpu + 10);
+                }
+                state.currentCpu = nextCpu;
                 autoscale();
             });
-            buttons.decreaseCpu.on("click", () => {
-                state.currentCpu = Math.max(0, state.currentCpu - 10);
-                autoscale();
-            });
-             buttons.increaseMem.on("click", () => {
-                state.currentMem = Math.min(100, state.currentMem + 10);
-                autoscale();
-            });
-            buttons.decreaseMem.on("click", () => {
-                state.currentMem = Math.max(0, state.currentMem - 10);
-                autoscale();
-            });
+            
+            buttons.decrease.on("click", () => {
+                if (state.currentReplicas <= HPA_CONFIG.minReplicas && state.currentCpu <= 10) return;
 
+                let nextCpu = state.currentCpu;
+                for (let cpu = state.currentCpu - 10; cpu >= 0; cpu -= 10) {
+                     if (calculateDesiredReplicas(cpu, state.currentReplicas) < state.currentReplicas) {
+                        nextCpu = cpu;
+                        break;
+                    }
+                }
+                if(nextCpu === state.currentCpu){
+                     nextCpu = Math.max(0, state.currentCpu - 10);
+                }
+                 state.currentCpu = nextCpu;
+                 autoscale();
+            });
 
             buttons.reset.on("click", reset);
 
