@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Putting It All Together: A Real-World Kubernetes App</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .control-panel { 
+            backdrop-filter: blur(10px); 
+            -webkit-backdrop-filter: blur(10px);
+            position: sticky;
+            top: 0;
+            height: 100vh;
+        }
+        .control-btn { transition: all 0.2s ease-in-out; }
+        .control-btn.active, .control-btn:hover:not(:disabled) {
+            transform: scale(1.05);
+            box-shadow: 0 0 15px rgba(59, 130, 246, 0.5);
+        }
+        .component { transition: all 0.5s ease-in-out; }
+        .component:not(.active-component) { opacity: 0.4; }
+        .active-component rect, .active-component circle {
+            filter: url(#glow);
+        }
+        .traffic-line {
+            stroke-dasharray: 5;
+            animation: dash-flow 1s linear infinite;
+        }
+        .connection-line {
+             transition: all 0.5s ease-in-out;
+        }
+        @keyframes dash-flow {
+            to { stroke-dashoffset: -20; }
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-white flex">
+
+    <!-- Main Visualization -->
+    <div id="viz-container" class="flex-grow relative">
+        <svg id="viz" class="w-full"></svg>
+    </div>
+
+    <!-- Control Panel -->
+    <div class="w-96 flex-shrink-0 bg-gray-800 bg-opacity-70 p-6 shadow-2xl overflow-y-auto control-panel">
+         <div class="mb-6">
+            <a href="index.html" class="inline-flex items-center text-sm text-cyan-400 hover:text-cyan-300 transition-colors">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+                </svg>
+                Back to Learning Path
+            </a>
+        </div>
+        <h2 class="text-2xl font-bold mb-6 text-cyan-400">The Journey of a Request</h2>
+        <div class="space-y-2 mb-6">
+            <button id="btn-step-1" data-step="1" class="control-btn w-full text-left p-3 rounded-lg bg-gray-700 hover:bg-gray-600">1. User Request</button>
+            <button id="btn-step-2" data-step="2" class="control-btn w-full text-left p-3 rounded-lg bg-gray-700 hover:bg-gray-600">2. Ingress Routing</button>
+            <button id="btn-step-3" data-step="3" class="control-btn w-full text-left p-3 rounded-lg bg-gray-700 hover:bg-gray-600">3. Service to Pod</button>
+            <button id="btn-step-4" data-step="4" class="control-btn w-full text-left p-3 rounded-lg bg-gray-700 hover:bg-gray-600">4. Config & Secrets</button>
+            <button id="btn-step-5" data-step="5" class="control-btn w-full text-left p-3 rounded-lg bg-gray-700 hover:bg-gray-600">5. Database Access</button>
+            <button id="btn-step-6" data-step="6" class="control-btn w-full text-left p-3 rounded-lg bg-gray-700 hover:bg-gray-600">6. Persistent Storage</button>
+            <button id="btn-step-7" data-step="7" class="control-btn w-full text-left p-3 rounded-lg bg-gray-700 hover:bg-gray-600">7. Autoscaling</button>
+            <button id="btn-reset" class="control-btn w-full bg-gray-600 hover:bg-gray-500 text-white font-bold py-3 px-4 rounded-lg mt-4">
+                Reset
+            </button>
+        </div>
+
+        <div id="explanation-box" class="bg-gray-900 p-4 rounded-lg h-auto min-h-[16rem]">
+            <h3 id="exp-title" class="text-lg font-bold text-cyan-400 mb-2"></h3>
+            <p id="exp-desc" class="text-sm text-gray-400 mb-3"></p>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const svg = d3.select("#viz");
+            const vizContainer = document.getElementById('viz-container');
+            let width, height;
+
+            const expTitle = d3.select("#exp-title");
+            const expDesc = d3.select("#exp-desc");
+
+            const steps = [
+                { id: "initial", title: "A Complete Kubernetes Application", desc: "This diagram shows all the components working together. Click a step on the right to see how a user request flows through the system." },
+                { id: "1", title: "Step 1: The User Request & Load Balancer", desc: "A user requests `/api/user/123`. The request hits the external LoadBalancer, which is the single entry point to the cluster from the internet." },
+                { id: "2", title: "Step 2: Ingress Routing", desc: "The LoadBalancer forwards the request to the Ingress Controller. The controller reads its rules and sees that `/api` traffic should go to the `api-service`." },
+                { id: "3", title: "Step 3: Service to Pod", desc: "The Ingress Controller sends the request to the `api-service`. This `ClusterIP` service then load balances the request to one of its healthy API pods." },
+                { id: "4", title: "Step 4: Pod Logic & Configuration", desc: "The API pod receives the request. To connect to the database, it reads credentials from a file mounted via a Secret." },
+                { id: "5", title: "Step 5: Database Access", desc: "The API pod now needs user data. It sends a query to the `db-service`, which provides a stable network endpoint for the database." },
+                { id: "6", title: "Step 6: Persistent Storage", desc: "The `db-service` routes the query to the DB Pod. This pod reads/writes data from its mounted volume, which is a PersistentVolume (PV) bound via a PersistentVolumeClaim (PVC)." },
+                { id: "7", title: "Step 7: Autoscaling Under Load", desc: "If many requests come in, the HPA will detect high CPU on the API pods. It will automatically tell the Deployment to add more pod replicas to handle the load." },
+            ];
+            
+            const highlights = {
+                "1": ["internet", "lb"],
+                "2": ["lb", "ingress"],
+                "3": ["ingress", "apiService", "apiPod"],
+                "4": ["apiPod", "secret"],
+                "5": ["apiPod", "dbService"],
+                "6": ["dbService", "dbPod", "pvc", "pv"],
+                "7": ["hpa", "apiPod"],
+            };
+
+            let currentStep = 0;
+
+            function resize() {
+                width = vizContainer.clientWidth;
+                height = vizContainer.clientHeight;
+                svg.attr("width", width); 
+                drawVisualization();
+            }
+
+            function drawVisualization() {
+                svg.selectAll("*").remove();
+
+                const defs = svg.append("defs");
+                const addMarker = (id, color) => defs.append("marker").attr("id", id).attr("viewBox", "0 -5 10 10").attr("refX", 10).attr("refY", 0).attr("markerWidth", 6).attr("markerHeight", 6).attr("orient", "auto").append("path").attr("d", "M0,-5L10,0L0,5").attr("fill", color);
+                addMarker("arrow-yellow", "#FBBF24");
+                addMarker("arrow-purple", "#C084FC");
+                addMarker("arrow-blue", "#60A5FA");
+                addMarker("arrow-green", "#34D399");
+
+                const filter = defs.append("filter").attr("id", "glow").attr('x', '-50%').attr('y', '-50%').attr('width', '200%').attr('height', '200%');
+                filter.append("feGaussianBlur").attr("stdDeviation", "8").attr("result", "coloredBlur");
+                const feMerge = filter.append("feMerge");
+                feMerge.append("feMergeNode").attr("in", "coloredBlur");
+                feMerge.append("feMergeNode").attr("in", "SourceGraphic");
+
+                const clusterX = width * 0.1, clusterY = 50, clusterWidth = width * 0.8;
+                const internetPos = { x: width/2, y: 30 };
+                const lbPos = { x: width/2, y: clusterY + 50 };
+                const ingressPos = { x: width/2, y: clusterY + 130 };
+                const apiServicePos = { x: width * 0.35, y: clusterY + 250 };
+                const apiPodPos = { x: apiServicePos.x, y: apiServicePos.y + 100 };
+                const dbServicePos = { x: apiServicePos.x, y: apiPodPos.y + 100 };
+                const dbPodPos = { x: dbServicePos.x, y: dbServicePos.y + 100 };
+                const pvcPos = { x: dbPodPos.x, y: dbPodPos.y + 80 };
+                const pvPos = { x: pvcPos.x, y: pvcPos.y + 80 };
+                const secretPos = { x: width * 0.18, y: dbPodPos.y };
+                const hpaPos = { x: apiPodPos.x + 150, y: apiPodPos.y };
+                
+                const totalHeight = pvPos.y + 80;
+                svg.attr("height", totalHeight);
+                const clusterHeight = totalHeight - clusterY - 30;
+
+                svg.append("rect").attr("x", clusterX).attr("y", clusterY).attr("width", clusterWidth).attr("height", clusterHeight).attr("rx", 15).attr("fill", "rgba(255, 255, 255, 0.05)").attr("stroke", "rgba(59, 130, 246, 0.5)");
+
+                const components = {
+                    internet: svg.append("text").text("Internet User").attr("x", internetPos.x).attr("y", internetPos.y).attr("text-anchor", "middle"),
+                    lb: svg.append("g").call(g => { g.append("rect").attr("x", lbPos.x-60).attr("y", lbPos.y-20).attr("width", 120).attr("height", 40).attr("rx", 8).attr("fill", "rgba(249, 115, 22, 0.6)"); g.append("text").text("LoadBalancer").attr("x", lbPos.x).attr("y", lbPos.y).attr("text-anchor", "middle").attr("dy", "0.35em"); }),
+                    ingress: svg.append("g").call(g => { g.append("rect").attr("x", ingressPos.x - 75).attr("y", ingressPos.y - 25).attr("width", 150).attr("height", 50).attr("rx",8).attr("fill","rgba(20, 184, 166, 0.6)"); g.append("text").text("Ingress Controller").attr("x", ingressPos.x).attr("y", ingressPos.y).attr("text-anchor", "middle").attr("dy", "0.35em"); }),
+                    apiService: svg.append("g").call(g => { g.append("rect").attr("x", apiServicePos.x - 55).attr("y", apiServicePos.y - 20).attr("width", 110).attr("height", 40).attr("rx",8).attr("fill","rgba(168, 85, 247, 0.6)"); g.append("text").text("api-service").attr("x", apiServicePos.x).attr("y", apiServicePos.y).attr("text-anchor", "middle").attr("dy", "0.35em"); }),
+                    apiPod: svg.append("g").call(g => { g.append("circle").attr("cx", apiPodPos.x).attr("cy", apiPodPos.y).attr("r", 30).attr("fill","rgba(168, 85, 247, 0.3)"); g.append("text").text("API Pod").attr("x", apiPodPos.x).attr("y", apiPodPos.y).attr("text-anchor", "middle").attr("dy", "0.35em"); }),
+                    secret: svg.append("g").call(g => { g.append("rect").attr("x", secretPos.x - 50).attr("y", secretPos.y - 20).attr("width", 100).attr("height", 40).attr("rx",8).attr("fill","rgba(236, 72, 153, 0.6)"); g.append("text").text("Secret").attr("x", secretPos.x).attr("y", secretPos.y).attr("text-anchor", "middle").attr("dy", "0.35em"); }),
+                    dbService: svg.append("g").call(g => { g.append("rect").attr("x", dbServicePos.x - 55).attr("y", dbServicePos.y - 20).attr("width", 110).attr("height", 40).attr("rx",8).attr("fill","rgba(14, 165, 233, 0.6)"); g.append("text").text("db-service").attr("x", dbServicePos.x).attr("y", dbServicePos.y).attr("text-anchor", "middle").attr("dy", "0.35em"); }),
+                    dbPod: svg.append("g").call(g => { g.append("circle").attr("cx", dbPodPos.x).attr("cy", dbPodPos.y).attr("r", 30).attr("fill","rgba(14, 165, 233, 0.3)"); g.append("text").text("DB Pod").attr("x", dbPodPos.x).attr("y", dbPodPos.y).attr("text-anchor", "middle").attr("dy", "0.35em"); }),
+                    pvc: svg.append("g").call(g => { g.append("rect").attr("x", pvcPos.x - 75).attr("y", pvcPos.y - 20).attr("width", 150).attr("height", 40).attr("rx",8).attr("fill","rgba(16, 185, 129, 0.4)"); g.append("text").text("PersistentVolumeClaim").attr("x", pvcPos.x).attr("y", pvcPos.y).attr("text-anchor", "middle").attr("dy", "0.35em"); }),
+                    pv: svg.append("g").call(g => { g.append("rect").attr("x", pvPos.x - 75).attr("y", pvPos.y - 20).attr("width", 150).attr("height", 40).attr("rx",8).attr("fill","rgba(16, 185, 129, 0.6)"); g.append("text").text("PersistentVolume").attr("x", pvPos.x).attr("y", pvPos.y).attr("text-anchor", "middle").attr("dy", "0.35em"); }),
+                    hpa: svg.append("g").call(g => { g.append("rect").attr("x", hpaPos.x - 50).attr("y", hpaPos.y - 20).attr("width", 100).attr("height", 40).attr("rx",8).attr("fill","rgba(234, 179, 8, 0.6)"); g.append("text").text("HPA").attr("x", hpaPos.x).attr("y", hpaPos.y).attr("text-anchor", "middle").attr("dy", "0.35em"); })
+                };
+
+                const lines = {
+                    "1": [svg.append("line").attr("x1", internetPos.x).attr("y1", internetPos.y + 15).attr("x2", lbPos.x).attr("y2", lbPos.y - 20)],
+                    "2": [svg.append("line").attr("x1", lbPos.x).attr("y1", lbPos.y + 20).attr("x2", ingressPos.x).attr("y2", ingressPos.y - 25)],
+                    "3": [svg.append("line").attr("x1", ingressPos.x).attr("y1", ingressPos.y + 25).attr("x2", apiServicePos.x).attr("y2", apiServicePos.y - 20)],
+                    "4": [
+                         svg.append("line").attr("x1", apiServicePos.x).attr("y1", apiServicePos.y + 20).attr("x2", apiPodPos.x).attr("y2", apiPodPos.y - 30),
+                         svg.append("line").attr("x1", secretPos.x + 50).attr("y1", secretPos.y).attr("x2", apiPodPos.x - 30).attr("y2", apiPodPos.y)
+                    ],
+                    "5": [svg.append("line").attr("x1", apiPodPos.x).attr("y1", apiPodPos.y + 30).attr("x2", dbServicePos.x).attr("y2", dbServicePos.y - 20)],
+                    "6": [
+                        svg.append("line").attr("x1", dbServicePos.x).attr("y1", dbServicePos.y + 20).attr("x2", dbPodPos.x).attr("y2", dbPodPos.y - 30),
+                        svg.append("line").attr("x1", dbPodPos.x).attr("y1", dbPodPos.y + 30).attr("x2", pvcPos.x).attr("y2", pvcPos.y - 20),
+                        svg.append("line").attr("x1", pvcPos.x).attr("y1", pvcPos.y + 20).attr("x2", pvPos.x).attr("y2", pvPos.y - 20)
+                    ],
+                    "7": [svg.append("line").attr("x1", hpaPos.x - 50).attr("y1", hpaPos.y).attr("x2", apiPodPos.x + 30).attr("y2", apiPodPos.y)]
+                };
+
+                const lineColors = { "1": "#FBBF24", "2": "#FBBF24", "3": "#C084FC", "4": ["#C084FC", "#EC4899"], "5":"#60A5FA", "6":["#60A5FA", "#10B981", "#10B981"], "7": ["#F59E0B"] };
+                const lineMarkers = { "1": "url(#arrow-yellow)", "2": "url(#arrow-yellow)", "3": "url(#arrow-purple)", "4": ["url(#arrow-purple)", null], "5":"url(#arrow-blue)", "6":["url(#arrow-blue)", null, null], "7":[null] };
+
+                Object.values(lines).flat().forEach(l => l.attr("class", "connection-line").attr("stroke", "#4B5563").attr("stroke-width", 1.5).attr("stroke-dasharray", "3,3"));
+
+                expTitle.text(steps[currentStep].title);
+                expDesc.text(steps[currentStep].desc);
+                
+                Object.values(components).forEach(c => c.classed("component", true).classed("active-component", false));
+                
+                const activeIds = highlights[currentStep] || [];
+                activeIds.forEach(id => {
+                    if (components[id]) components[id].classed("active-component", true);
+                });
+
+                if (lines[currentStep]) {
+                    const stepLines = lines[currentStep];
+                    stepLines.forEach((line, i) => {
+                        const color = Array.isArray(lineColors[currentStep]) ? lineColors[currentStep][i] : lineColors[currentStep];
+                        const marker = Array.isArray(lineMarkers[currentStep]) ? lineMarkers[currentStep][i] : lineMarkers[currentStep];
+                        line.attr("stroke", color).attr("stroke-width", 2).classed("traffic-line", true).attr("stroke-dasharray", null);
+                        if(marker) line.attr("marker-end", marker);
+                    });
+                }
+            }
+            
+            function setStep(step) {
+                currentStep = step;
+                d3.selectAll('.control-btn').classed('active', false);
+                if (step > 0) {
+                    d3.select(`#btn-step-${step}`).classed('active', true);
+                }
+                drawVisualization();
+            }
+
+            function reset() {
+                setStep(0);
+            }
+
+            for (let i = 1; i <= 7; i++) {
+                d3.select(`#btn-step-${i}`).on('click', () => setStep(i));
+            }
+            d3.select("#btn-reset").on("click", reset);
+            
+            window.addEventListener('resize', resize);
+            resize();
+            reset();
+        });
+    </script>
+</body>
+</html>
